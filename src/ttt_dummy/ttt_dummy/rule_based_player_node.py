@@ -254,19 +254,12 @@ class RuleBasedPlayerNode(Node):
     @staticmethod
     def _choose_cell(board: list[int], legal: list[int], player_id: int) -> int:
         own_mark = player_id + 1
-        opponent_mark = 2 if own_mark == 1 else 1
 
         winning_cell = RuleBasedPlayerNode._find_completion(
             board, legal, own_mark
         )
         if winning_cell is not None:
             return winning_cell
-
-        blocking_cell = RuleBasedPlayerNode._find_completion(
-            board, legal, opponent_mark
-        )
-        if blocking_cell is not None:
-            return blocking_cell
 
         for cell_id in CELL_PRIORITY:
             if cell_id in legal:
