@@ -35,15 +35,14 @@ def generate_launch_description() -> LaunchDescription:
                 output="screen",
             ),
             Node(
-                package="ttt_dummy",
-                executable="random_player_node",
-                name="player_0_random",
+                package="ttt_player",
+                executable="student_player_node",
+                name="player_0_student",
                 output="screen",
                 parameters=[
                     {
-                        "player_name": "Random",
-                        "plan_turn_service": "/player_0_random/plan_turn",
-                        "seed": 0,
+                        "player_name": "Student",
+                        "plan_turn_service": "/player_0_student/plan_turn",
                     }
                 ],
             ),
@@ -51,14 +50,14 @@ def generate_launch_description() -> LaunchDescription:
                 period=1.0,
                 actions=[
                     Node(
-                        package="ttt_player",
-                        executable="student_player_node",
-                        name="player_1_student",
+                        package="ttt_dummy",
+                        executable="rule_based_player_node",
+                        name="player_1_rule_based",
                         output="screen",
                         parameters=[
                             {
-                                "player_name": "Student",
-                                "plan_turn_service": "/player_1_student/plan_turn",
+                                "player_name": "RuleBased",
+                                "plan_turn_service": "/player_1_rule_based/plan_turn",
                             }
                         ],
                     )

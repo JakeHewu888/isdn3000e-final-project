@@ -11,6 +11,7 @@ def generate_launch_description() -> LaunchDescription:
 
     return LaunchDescription(
         [
+            # Start MoveIt move_group (provides /compute_ik).
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(
                     os.path.join(bringup_share, "launch", "moveit_ik.launch.py")

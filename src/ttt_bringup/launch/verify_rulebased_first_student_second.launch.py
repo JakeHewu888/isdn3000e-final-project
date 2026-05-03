@@ -36,14 +36,13 @@ def generate_launch_description() -> LaunchDescription:
             ),
             Node(
                 package="ttt_dummy",
-                executable="random_player_node",
-                name="player_0_random",
+                executable="rule_based_player_node",
+                name="player_0_rule_based",
                 output="screen",
                 parameters=[
                     {
-                        "player_name": "Random",
-                        "plan_turn_service": "/player_0_random/plan_turn",
-                        "seed": 0,
+                        "player_name": "RuleBased",
+                        "plan_turn_service": "/player_0_rule_based/plan_turn",
                     }
                 ],
             ),
