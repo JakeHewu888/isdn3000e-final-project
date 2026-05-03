@@ -1,20 +1,19 @@
 from __future__ import annotations
 
-import random
 import time
 
 import rclpy
 from geometry_msgs.msg import Pose
 from moveit_msgs.msg import RobotState as MoveItRobotState
-from moveit_msgs.srv import GetPositionIK
 from moveit_msgs.msg import RobotTrajectory
+from moveit_msgs.srv import GetPositionIK
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from sensor_msgs.msg import JointState
 from trajectory_msgs.msg import JointTrajectoryPoint
 
-from ttt_interfaces.msg import TurnPlan, WorkspaceLayout
+from ttt_interfaces.msg import GameSnapshot, TurnPlan
 from ttt_interfaces.srv import PlanTurn, RegisterPlayer
 
 
@@ -23,6 +22,18 @@ HOME = [0.0, -0.785398, 0.0, -2.356194, 0.0, 1.570796, 0.785398]
 
 _LINK8_QUAT = (0.9238795325112867, -0.3826834323650898, 0.0, 0.0)
 _LINK8_TCP_Z_OFFSET = 0.1034
+
+WIN_LINES = (
+    (0, 1, 2),
+    (3, 4, 5),
+    (6, 7, 8),
+    (0, 3, 6),
+    (1, 4, 7),
+    (2, 5, 8),
+    (0, 4, 8),
+    (2, 4, 6),
+)
+CELL_PRIORITY = (4, 0, 2, 6, 8, 1, 3, 5, 7)
 
 
 def _make_point(positions: list[float], seconds: float) -> JointTrajectoryPoint:
@@ -48,17 +59,14 @@ def _make_trajectory(
     return trajectory
 
 
-class RandomPlayerNode(Node):
+class RuleBasedPlayerNode(Node):
     def __init__(self) -> None:
-        super().__init__("random_player")
+        super().__init__("rule_based_player")
         self.declare_parameter("player_name", self.get_name())
-        self.declare_parameter("plan_turn_service", "/random_player/plan_turn")
-        self.declare_parameter("seed", -1)
+        self.declare_parameter("plan_turn_service", "/rule_based_player/plan_turn")
 
         self.player_name = str(self.get_parameter("player_name").value)
         self.plan_turn_service = str(self.get_parameter("plan_turn_service").value)
-        seed = int(self.get_parameter("seed").value)
-        self.rng = random.Random(seed) if seed >= 0 else random
         self.registered = False
         self.registration_in_flight = False
         self.player_id = 255
@@ -96,7 +104,7 @@ class RandomPlayerNode(Node):
         self.registration_in_flight = False
         try:
             response = future.result()
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             self.get_logger().error(f"Registration failed: {exc}")
             return
         if not response.success:
@@ -139,9 +147,7 @@ class RandomPlayerNode(Node):
         return [joint_positions[name] for name in PANDA_JOINTS]
 
     @staticmethod
-    def _link8_pose_from_tcp_target(
-        x: float, y: float, z: float
-    ) -> Pose:
+    def _link8_pose_from_tcp_target(x: float, y: float, z: float) -> Pose:
         pose = Pose()
         pose.position.x = x
         pose.position.y = y
@@ -155,17 +161,27 @@ class RandomPlayerNode(Node):
     def _handle_plan_turn(
         self, request: PlanTurn.Request, response: PlanTurn.Response
     ) -> PlanTurn.Response:
-        move = self._select_random_move(request)
+        if request.player_id != self.player_id:
+            response.accepted = False
+            response.message = "Plan request does not match registered player id."
+            return response
+
+        move = self._select_rule_based_move(request)
         if move is None:
             response.accepted = False
-            response.message = "No random move available for current board state."
+            response.message = "No rule-based move available for current board state."
             return response
 
         piece_id, cell_id = move
 
-        piece_pose = self._find_piece_pose(request, piece_id)
-        cell_pose = request.layout.cell_poses[cell_id]
+        try:
+            piece_pose = self._find_piece_pose(request, piece_id)
+        except ValueError as exc:
+            response.accepted = False
+            response.message = str(exc)
+            return response
 
+        cell_pose = request.layout.cell_poses[cell_id]
         pick_target = self._link8_pose_from_tcp_target(
             piece_pose.position.x, piece_pose.position.y, piece_pose.position.z
         )
@@ -185,9 +201,7 @@ class RandomPlayerNode(Node):
             response.message = "IK failed for place target."
             return response
 
-        self.get_logger().info(
-            f"IK solved: piece {piece_id} -> cell {cell_id}"
-        )
+        self.get_logger().info(f"IK solved: piece {piece_id} -> cell {cell_id}")
 
         plan = TurnPlan()
         plan.match_id = request.match_id
@@ -201,7 +215,7 @@ class RandomPlayerNode(Node):
         plan.place_to_home = _make_trajectory(place_goal, HOME)
 
         response.accepted = True
-        response.message = "IK-based random plan generated."
+        response.message = "IK-based rule plan generated."
         response.plan = plan
         return response
 
@@ -215,12 +229,13 @@ class RandomPlayerNode(Node):
                 return piece.pose
         raise ValueError(f"Piece {piece_id} not found in request data.")
 
-    def _select_random_move(self, request: PlanTurn.Request) -> tuple[int, int] | None:
-        available = [
+    @staticmethod
+    def _select_rule_based_move(request: PlanTurn.Request) -> tuple[int, int] | None:
+        available = sorted(
             piece.piece_id
             for piece in request.snapshot.pieces
             if piece.available and piece.owner == request.player_id
-        ]
+        )
         legal = [
             index
             for index, enabled in enumerate(request.snapshot.legal_actions)
@@ -228,14 +243,55 @@ class RandomPlayerNode(Node):
         ]
         if not available or not legal:
             return None
-        piece_id = self.rng.choice(available)
-        cell_id = self.rng.choice(legal)
-        return piece_id, cell_id
+
+        cell_id = RuleBasedPlayerNode._choose_cell(
+            board=list(request.snapshot.board),
+            legal=legal,
+            player_id=int(request.player_id),
+        )
+        return available[0], cell_id
+
+    @staticmethod
+    def _choose_cell(board: list[int], legal: list[int], player_id: int) -> int:
+        own_mark = player_id + 1
+        opponent_mark = 2 if own_mark == 1 else 1
+
+        winning_cell = RuleBasedPlayerNode._find_completion(
+            board, legal, own_mark
+        )
+        if winning_cell is not None:
+            return winning_cell
+
+        blocking_cell = RuleBasedPlayerNode._find_completion(
+            board, legal, opponent_mark
+        )
+        if blocking_cell is not None:
+            return blocking_cell
+
+        for cell_id in CELL_PRIORITY:
+            if cell_id in legal:
+                return cell_id
+
+        return legal[0]
+
+    @staticmethod
+    def _find_completion(
+        board: list[int], legal: list[int], mark: int
+    ) -> int | None:
+        legal_set = set(legal)
+        for line in WIN_LINES:
+            values = [board[index] for index in line]
+            if values.count(mark) != 2 or values.count(GameSnapshot.EMPTY) != 1:
+                continue
+            empty_cell = line[values.index(GameSnapshot.EMPTY)]
+            if empty_cell in legal_set:
+                return empty_cell
+        return None
 
 
 def main(args=None) -> None:
     rclpy.init(args=args)
-    node = RandomPlayerNode()
+    node = RuleBasedPlayerNode()
     executor = MultiThreadedExecutor()
     executor.add_node(node)
     executor.spin()

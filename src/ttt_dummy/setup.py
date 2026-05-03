@@ -20,6 +20,7 @@ setup(
         "console_scripts": [
             "dummy_player_node = ttt_dummy.dummy_player_node:main",
             "random_player_node = ttt_dummy.random_player_node:main",
+            "rule_based_player_node = ttt_dummy.rule_based_player_node:main",
         ],
     },
 )
