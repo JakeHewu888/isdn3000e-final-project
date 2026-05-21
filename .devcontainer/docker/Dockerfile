@@ -80,9 +80,9 @@ RUN apt-get update \
     ros-humble-moveit-simple-controller-manager \
     ros-humble-moveit-resources-panda-moveit-config \
     ros-humble-moveit-resources-panda-description \
-    ros-humble-gazebo-ros-pkgs \
-    ros-humble-gazebo-plugins \
-    ros-humble-gazebo-ros2-control \
+    # ros-humble-gazebo-ros-pkgs \
+    # ros-humble-gazebo-plugins \
+    # ros-humble-gazebo-ros2-control \
     mesa-utils \
     x11-apps \
     wget \
